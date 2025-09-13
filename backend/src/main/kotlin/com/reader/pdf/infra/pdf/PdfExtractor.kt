@@ -1,11 +1,13 @@
 package com.reader.pdf.infra.pdf
 
 import com.google.cloud.vision.v1.*
+import com.google.auth.oauth2.GoogleCredentials
 import org.apache.pdfbox.pdmodel.PDDocument
 import org.apache.pdfbox.rendering.PDFRenderer
 import org.apache.pdfbox.text.PDFTextStripper
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
+import org.springframework.core.io.ClassPathResource
 import org.springframework.stereotype.Component
 import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
@@ -18,6 +20,9 @@ class PdfExtractor {
 
     @Value("\${google.cloud.project-id}")
     private lateinit var projectId: String
+
+    @Value("\${google.cloud.credentials.location}")
+    private lateinit var credentialsPath: String
 
     fun extract(inputStream: InputStream): String {
         return PDDocument.load(inputStream).use { document ->
@@ -53,7 +58,17 @@ class PdfExtractor {
         val renderer = PDFRenderer(document)
         val stringBuilder = StringBuilder()
 
-        ImageAnnotatorClient.create().use { client ->
+        // Load credentials from the classpath resource
+        val credentials = ClassPathResource(credentialsPath).inputStream.use { credentialsStream ->
+            GoogleCredentials.fromStream(credentialsStream)
+        }
+
+        // Create ImageAnnotatorClient with explicit credentials
+        val settings = ImageAnnotatorSettings.newBuilder()
+            .setCredentialsProvider { credentials }
+            .build()
+
+        ImageAnnotatorClient.create(settings).use { client ->
             for (pageIndex in 0 until document.numberOfPages) {
                 log.info("페이지 ${pageIndex + 1} OCR 처리 중...")
 
@@ -73,8 +88,23 @@ class PdfExtractor {
 
                 val response = client.batchAnnotateImages(listOf(request))
 
-                // OCR 결과 처리
-                val textAnnotation = response.responsesList[0].textAnnotationsList.firstOrNull()
+                // Response 디버깅을 위한 로그 추가
+                log.debug("Vision API 응답: {}", response)
+
+                val firstResponse = response.responsesList[0]
+                log.debug("첫 번째 응답 상태: {}", firstResponse.error)
+
+                if (firstResponse.error != null && firstResponse.error.code != 0) {
+                    log.error("페이지 ${pageIndex + 1}: Vision API 오류 - {}", firstResponse.error.message)
+                    continue
+                }
+
+                if (firstResponse.textAnnotationsCount == 0) {
+                    log.warn("페이지 ${pageIndex + 1}: 텍스트 검출 결과가 없습니다")
+                    continue
+                }
+
+                val textAnnotation = firstResponse.textAnnotationsList.firstOrNull()
                 if (textAnnotation != null) {
                     if (stringBuilder.isNotEmpty()) {
                         stringBuilder.append("\n\n")
@@ -88,8 +118,8 @@ class PdfExtractor {
         }
 
         return stringBuilder.toString()
-            .replace("\\s*\\n\\s*".toRegex(), "\n")  // 줄바꿈 주변 공백 정리
-            .replace("\\n{3,}".toRegex(), "\n\n")    // 과도한 줄바꿈 정리
+            .replace("\\s*\\n\\s*".toRegex(), "\n")
+            .replace("\\n{3,}".toRegex(), "\n\n")
             .trim()
     }
 
