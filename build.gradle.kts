@@ -1,21 +1,22 @@
 plugins {
-    kotlin("jvm") version "2.1.20"
+    kotlin("jvm") version "2.2.0" apply false
+    id("org.springframework.boot") version "3.3.0" apply false
+    id("io.spring.dependency-management") version "1.1.4" apply false
 }
 
-group = "com.hyeyeoung"
-version = "1.0-SNAPSHOT"
+allprojects {
+    group = "com.example"
+    version = "1.0.0"
 
-repositories {
-    mavenCentral()
+    repositories {
+        mavenCentral()
+    }
 }
 
-dependencies {
-    testImplementation(kotlin("test"))
-}
+subprojects {
+    apply(plugin = "org.jetbrains.kotlin.jvm")
 
-tasks.test {
-    useJUnitPlatform()
-}
-kotlin {
-    jvmToolchain(21)
+    dependencies {
+        // 모든 서브프로젝트에 공통으로 적용할 의존성이 있다면 여기에 추가
+    }
 }
