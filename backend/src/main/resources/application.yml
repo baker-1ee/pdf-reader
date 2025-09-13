@@ -3,3 +3,14 @@ logging:
     com.reader.pdf: DEBUG
     org.apache.pdfbox: DEBUG
 
+spring:
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 10MB
+
+google:
+  cloud:
+    project-id: ${GOOGLE_CLOUD_PROJECT_ID}
+    credentials:
+      location: ${GOOGLE_APPLICATION_CREDENTIALS}

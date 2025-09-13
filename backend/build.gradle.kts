@@ -12,7 +12,12 @@ repositories {
 dependencies {
     implementation("org.springframework.boot:spring-boot-starter-web")
     implementation("org.apache.pdfbox:pdfbox:2.0.30")
-    implementation("net.sourceforge.tess4j:tess4j:5.8.0")
+
+    // Google Cloud Vision API
+    implementation(platform("com.google.cloud:libraries-bom:26.22.0"))
+    implementation("com.google.cloud:google-cloud-vision")
+    implementation("com.google.cloud:google-cloud-storage")
+
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.junit.jupiter:junit-jupiter:5.8.1")
 }

@@ -24,7 +24,7 @@ hs_err_pid*
 replay_pid*
 
 # Gradle
-.gradle
+.gradle/
 build/
 !gradle/wrapper/gradle-wrapper.jar
 !**/src/main/**/build/
@@ -32,7 +32,6 @@ build/
 
 # IntelliJ
 .idea/
-*.iws
 *.iml
 *.ipr
 out/
@@ -60,3 +59,8 @@ frontend/dist/
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Google Cloud credentials
+**/secrets/
+*.json
+!package.json
