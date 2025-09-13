@@ -1,4 +1,4 @@
-package com.example.pdfreader
+package com.reader.pdf
 
 import org.springframework.boot.autoconfigure.SpringBootApplication
 import org.springframework.boot.runApplication
