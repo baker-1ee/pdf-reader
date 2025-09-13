@@ -6,15 +6,33 @@ import org.apache.pdfbox.rendering.PDFRenderer
 import org.apache.pdfbox.text.PDFTextStripper
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
+import java.awt.Color
+import java.awt.image.BufferedImage
 import java.io.InputStream
 import javax.imageio.ImageIO
 import java.io.File
+import kotlin.math.min
 
 @Component
 class PdfExtractor {
     private val log = LoggerFactory.getLogger(this::class.java)
-    private val tesseract = Tesseract().apply {
-        setLanguage("kor+eng")  // 한글과 영어 모두 지원
+    private val tesseract by lazy {
+        System.setProperty("jna.library.path", "/opt/homebrew/lib")
+        Tesseract().apply {
+            setDatapath("/opt/homebrew/share/tessdata")
+            setLanguage("kor")  // 한글만 우선 적용
+
+            // OCR 최적화 설정
+            setVariable("tessedit_pageseg_mode", "1")  // PSM_AUTO
+            setVariable("preserve_interword_spaces", "1")
+            setVariable("tessedit_ocr_engine_mode", "3")  // LSTM
+            setVariable("debug_file", "/tmp/tesseract.log")
+
+            // 이미지 전처리 관련 설정
+            setVariable("textord_min_linesize", "2.5")  // 작은 텍스트 감지 개선
+            setVariable("edges_max_children_per_outline", "40")  // 문자 윤곽선 감지 개선
+            setVariable("tosp_threshold_bias2", "1")  // 자간 조정
+        }
     }
 
     fun extract(inputStream: InputStream): String {
@@ -47,6 +65,82 @@ class PdfExtractor {
         return stripper.getText(document)
     }
 
+    private fun preprocessImage(image: BufferedImage): BufferedImage {
+        // 스케일 조정 (해상도 최적화)
+        val maxDimension = 2400  // DPI 조정
+        val scale = if (image.width > maxDimension || image.height > maxDimension) {
+            min(maxDimension.toDouble() / image.width, maxDimension.toDouble() / image.height)
+        } else {
+            1.0
+        }
+
+        val scaledWidth = (image.width * scale).toInt()
+        val scaledHeight = (image.height * scale).toInt()
+
+        // 새로운 이미지 생성 (그레이스케일로 직접 변환)
+        val scaledImage = BufferedImage(scaledWidth, scaledHeight, BufferedImage.TYPE_BYTE_GRAY)
+        val g = scaledImage.createGraphics()
+        g.drawImage(image, 0, 0, scaledWidth, scaledHeight, null)
+        g.dispose()
+
+        // 대비 향상
+        val enhanced = enhanceContrast(scaledImage)
+
+        // 노이즈 제거 후 반환
+        removeNoise(enhanced)
+        return enhanced
+    }
+
+    private fun enhanceContrast(image: BufferedImage): BufferedImage {
+        val raster = image.raster
+        val pixels = raster.getPixels(0, 0, image.width, image.height, null as IntArray?)
+
+        // 히스토그램 스트레칭을 위한 최소/최대값 찾기
+        var min = 255
+        var max = 0
+        for (i in pixels.indices) {
+            min = min.coerceAtMost(pixels[i])
+            max = max.coerceAtLeast(pixels[i])
+        }
+
+        // 대비 향상
+        val range = max - min
+        if (range > 0) {
+            for (i in pixels.indices) {
+                pixels[i] = ((pixels[i] - min) * 255.0 / range).toInt().coerceIn(0, 255)
+            }
+        }
+
+        raster.setPixels(0, 0, image.width, image.height, pixels)
+        return image
+    }
+
+    private fun removeNoise(image: BufferedImage) {
+        val width = image.width
+        val height = image.height
+        val raster = image.raster
+
+        // 중간값 필터 적용
+        val pixels = raster.getPixels(0, 0, width, height, null as IntArray?)
+        val result = IntArray(pixels.size)
+        val window = IntArray(9)
+
+        for (y in 1 until height - 1) {
+            for (x in 1 until width - 1) {
+                var idx = 0
+                for (dy in -1..1) {
+                    for (dx in -1..1) {
+                        window[idx++] = pixels[(y + dy) * width + (x + dx)]
+                    }
+                }
+                window.sort()
+                result[y * width + x] = window[4]  // 중간값 선택
+            }
+        }
+
+        raster.setPixels(0, 0, width, height, result)
+    }
+
     private fun extractWithOcr(document: PDDocument): String {
         val renderer = PDFRenderer(document)
         val stringBuilder = StringBuilder()
@@ -54,23 +148,35 @@ class PdfExtractor {
         for (pageIndex in 0 until document.numberOfPages) {
             log.info("페이지 ${pageIndex + 1} OCR 처리 중...")
 
-            // PDF 페이지를 이미지로 변환
-            val image = renderer.renderImageWithDPI(pageIndex, 300f) // 300 DPI로 렌더링
+            // PDF 페이지를 고해상도 이미지로 변환
+            val image = renderer.renderImageWithDPI(pageIndex, 300f)
+
+            // 이미지 전처리
+            val processedImage = preprocessImage(image)
 
             // 임시 이미지 파일 생성
             val tempFile = File.createTempFile("pdf-page-$pageIndex", ".png")
-            ImageIO.write(image, "png", tempFile)
+            ImageIO.write(processedImage, "png", tempFile)
 
             try {
-                // OCR 수행
                 val pageText = tesseract.doOCR(tempFile)
-                stringBuilder.append(pageText).append("\n")
-                log.debug("페이지 ${pageIndex + 1} OCR 결과 일부: ${pageText.take(100)}...")
+                    .replace("\\s+".toRegex(), " ")
+                    .trim()
+
+                if (pageText.isNotBlank()) {
+                    stringBuilder.append(pageText).append("\n\n")
+                    log.info("페이지 ${pageIndex + 1} OCR 결과 길이: ${pageText.length}")
+                    log.debug("페이지 ${pageIndex + 1} OCR 결과 일부: ${pageText.take(200)}...")
+                } else {
+                    log.warn("페이지 ${pageIndex + 1}에서 텍스트가 추출되지 않았습니다.")
+                }
+            } catch (e: Exception) {
+                log.error("페이지 ${pageIndex + 1} OCR 처리 중 오류 발생", e)
             } finally {
-                tempFile.delete() // 임시 파일 삭제
+                tempFile.delete()
             }
         }
 
-        return stringBuilder.toString()
+        return stringBuilder.toString().trim()
     }
 }
