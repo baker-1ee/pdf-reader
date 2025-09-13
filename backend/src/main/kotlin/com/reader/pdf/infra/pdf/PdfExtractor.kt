@@ -66,8 +66,7 @@ class PdfExtractor {
     }
 
     private fun preprocessImage(image: BufferedImage): BufferedImage {
-        // 스케일 조정 (해상도 최적화)
-        val maxDimension = 2400  // DPI 조정
+        val maxDimension = 3000  // 해상도 증가
         val scale = if (image.width > maxDimension || image.height > maxDimension) {
             min(maxDimension.toDouble() / image.width, maxDimension.toDouble() / image.height)
         } else {
@@ -77,7 +76,7 @@ class PdfExtractor {
         val scaledWidth = (image.width * scale).toInt()
         val scaledHeight = (image.height * scale).toInt()
 
-        // 새로운 이미지 생성 (그레이스케일로 직접 변환)
+        // 그레이스케일 이미지 생성
         val scaledImage = BufferedImage(scaledWidth, scaledHeight, BufferedImage.TYPE_BYTE_GRAY)
         val g = scaledImage.createGraphics()
         g.drawImage(image, 0, 0, scaledWidth, scaledHeight, null)
@@ -85,9 +84,9 @@ class PdfExtractor {
 
         // 대비 향상
         val enhanced = enhanceContrast(scaledImage)
-
-        // 노이즈 제거 후 반환
+        // 노이즈 제거
         removeNoise(enhanced)
+
         return enhanced
     }
 
@@ -148,27 +147,62 @@ class PdfExtractor {
         for (pageIndex in 0 until document.numberOfPages) {
             log.info("페이지 ${pageIndex + 1} OCR 처리 중...")
 
-            // PDF 페이지를 고해상도 이미지로 변환
-            val image = renderer.renderImageWithDPI(pageIndex, 300f)
-
-            // 이미지 전처리
+            val image = renderer.renderImageWithDPI(pageIndex, 400f)
             val processedImage = preprocessImage(image)
-
-            // 임시 이미지 파일 생성
             val tempFile = File.createTempFile("pdf-page-$pageIndex", ".png")
             ImageIO.write(processedImage, "png", tempFile)
 
             try {
                 val pageText = tesseract.doOCR(tempFile)
-                    .replace("\\s+".toRegex(), " ")
+                    // 1. 기본 정리
+                    .replace("[\\t\\f\\r]".toRegex(), "")
+
+                    // 2. 특수문자 정규화
+                    .replace("\\d{2,3}%".toRegex()) { match ->  // 퍼센트 표시 정규화
+                        match.value.replace(" ", "")
+                    }
+                    .replace("[\\[\\(]\\s*[Hh]\\s*\\d+\\s*[\\]\\)]".toRegex()) { match ->  // [H22] 형태 정규화
+                        match.value.replace(" ", "")
+                    }
+
+                    // 3. 한글 문장 처리
+                    .replace("([가-힣]) +([가-힣])".toRegex()) { match ->
+                        val prev = match.groupValues[1]
+                        val next = match.groupValues[2]
+                        // 의미 단위로 띄어쓰기 유지
+                        if (isWordBoundary(prev, next)) {
+                            "$prev $next"
+                        } else {
+                            "$prev$next"
+                        }
+                    }
+
+                    // 4. 문장 부호 처리
+                    .replace(" +([.,?!])".toRegex(), "$1")
+                    .replace("([.,?!])(?=[가-힣a-zA-Z0-9])".toRegex(), "$1 ")
+
+                    // 5. 줄바꿈 처리
+                    .replace("\n{2,}".toRegex(), "\n")
+                    .replace("([가-힣a-zA-Z0-9])\n([가-힣a-zA-Z0-9])".toRegex()) { match ->
+                        val prev = match.groupValues[1]
+                        val next = match.groupValues[2]
+                        if (isSentenceEnd(prev)) {
+                            "$prev\n\n$next"
+                        } else {
+                            "$prev $next"
+                        }
+                    }
+
+                    // 6. 최종 정리
+                    .replace(" {2,}".toRegex(), " ")
+                    .replace("\\n{3,}".toRegex(), "\n\n")
                     .trim()
 
                 if (pageText.isNotBlank()) {
-                    stringBuilder.append(pageText).append("\n\n")
-                    log.info("페이지 ${pageIndex + 1} OCR 결과 길이: ${pageText.length}")
-                    log.debug("페이지 ${pageIndex + 1} OCR 결과 일부: ${pageText.take(200)}...")
-                } else {
-                    log.warn("페이지 ${pageIndex + 1}에서 텍스트가 추출되지 않았습니다.")
+                    if (stringBuilder.isNotEmpty()) {
+                        stringBuilder.append("\n\n")
+                    }
+                    stringBuilder.append(pageText)
                 }
             } catch (e: Exception) {
                 log.error("페이지 ${pageIndex + 1} OCR 처리 중 오류 발생", e)
@@ -177,6 +211,29 @@ class PdfExtractor {
             }
         }
 
-        return stringBuilder.toString().trim()
+        return stringBuilder.toString()
+            .replace("\\s*\\n\\s*".toRegex(), "\n")  // 줄바꿈 주변 공백 정리
+            .replace("\\n{3,}".toRegex(), "\n\n")    // 과도한 줄바꿈 정리
+            .trim()
+    }
+
+    private fun isWordBoundary(prev: String, next: String): Boolean {
+        // 단어 경계에서 띄어쓰기를 유지할 조합들
+        val boundaryWords = listOf(
+            "장인", "정신", "원칙", "패턴", "기법", "경험", "지식", "실전", "이론",
+            "자전거", "타기", "코드", "분석", "설계", "구현", "사례", "연구",
+            "결정", "단계", "부분", "시간", "노력", "가치"
+        )
+        return boundaryWords.any { prev.endsWith(it) || next.startsWith(it) }
+    }
+
+    private fun isSentenceEnd(text: String): Boolean {
+        return text.endsWith(".") || text.endsWith("?") || text.endsWith("!") ||
+                text.endsWith("다.") || text.endsWith("까?") || text.endsWith("라.") ||
+                text.endsWith("든다.") || text.endsWith("는다.") || text.endsWith("한다.")
+    }
+
+    private fun Char.isHangul(): Boolean {
+        return this in '가'..'힣'
     }
 }
