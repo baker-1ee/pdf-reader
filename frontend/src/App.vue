@@ -1,8 +1,11 @@
 <script setup>
+import { useRoute } from 'vue-router';
+
+const route = useRoute();
 </script>
 
 <template>
-  <nav>
+  <nav v-if="route.path !== '/reader'">
     <router-link to="/">Home</router-link> |
     <router-link to="/reader">Reader</router-link>
   </nav>
@@ -23,5 +26,10 @@ nav a {
 
 nav a.router-link-exact-active {
   color: #42b883;
+}
+
+body {
+  margin: 0;
+  padding: 0;
 }
 </style>
