@@ -11,6 +11,5 @@ spring:
 
 google:
   cloud:
-    project-id: ${GOOGLE_CLOUD_PROJECT_ID}
     credentials:
-      location: ${GOOGLE_APPLICATION_CREDENTIALS}
+      location: secrets/google-cloud-credentials.json
