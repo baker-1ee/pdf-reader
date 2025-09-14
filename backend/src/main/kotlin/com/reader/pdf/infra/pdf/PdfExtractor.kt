@@ -10,6 +10,7 @@ import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.core.io.ClassPathResource
 import org.springframework.stereotype.Component
+import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import javax.imageio.ImageIO
@@ -95,9 +96,31 @@ class PdfExtractor {
     }
 
     private fun convertPdfPageToImage(renderer: PDFRenderer, pageIndex: Int): ByteArray {
-        val image = renderer.renderImageWithDPI(pageIndex, 300f)
+        val originalImage = renderer.renderImageWithDPI(pageIndex, 300f)
+
+        // 푸터를 제외한 이미지 영역 계산
+        val footerHeightPercent = 0.1 // 하단 10% 제외
+        val newHeight = (originalImage.height * (1 - footerHeightPercent)).toInt()
+
+        // 푸터를 제외한 이미지 생성
+        val croppedImage = BufferedImage(
+            originalImage.width,
+            newHeight,
+            originalImage.type
+        )
+
+        // 원본 이미지에서 상단 부분만 복사
+        croppedImage.graphics.drawImage(
+            originalImage,
+            0, 0,
+            originalImage.width, newHeight,
+            0, 0,
+            originalImage.width, newHeight,
+            null
+        )
+
         return ByteArrayOutputStream().use { output ->
-            ImageIO.write(image, "PNG", output)
+            ImageIO.write(croppedImage, "PNG", output)
             output.toByteArray()
         }
     }
